@@ -5,6 +5,7 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <vector>
 
 struct PEHeader {
 	uint8_t magic[4]; // "PE\0\0"
@@ -168,9 +169,11 @@ bool wibo::Executable::loadPE(FILE *file, bool exec) {
 	// Read the sections
 	fseek(file, offsetToPE + sizeof header + header.sizeOfOptionalHeader, SEEK_SET);
 
+	std::vector<PESectionHeader> sections;
 	for (int i = 0; i < header.numberOfSections; i++) {
 		PESectionHeader section;
 		fread(&section, sizeof section, 1, file);
+		sections.push_back(section);
 
 		char name[9];
 		memcpy(name, section.name, 8);
@@ -225,6 +228,17 @@ bool wibo::Executable::loadPE(FILE *file, bool exec) {
 		freeModule(module);
 
 		++dir;
+	}
+
+	// Make read-only code sections read+execute once the image is filled in, as Windows does. An
+	// instrumentation agent (Frida) waits for this mprotect to know the image is ready to hook.
+	for (const PESectionHeader &section : sections) {
+		if (!(section.characteristics & 0x20000000) || (section.characteristics & 0x80000000))
+			continue; // not IMAGE_SCN_MEM_EXECUTE, or IMAGE_SCN_MEM_WRITE
+		uintptr_t start = (uintptr_t)imageBuffer + section.virtualAddress;
+		uintptr_t end = (start + section.virtualSize + pageSize - 1) & ~(uintptr_t)(pageSize - 1);
+		if (mprotect((void *)start, end - start, PROT_READ | PROT_EXEC) != 0)
+			DEBUG_LOG("mprotect of code section at %x failed: %s\n", (unsigned int)start, strerror(errno));
 	}
 
 	entryPoint = fromRVA<void>(header32.addressOfEntryPoint);

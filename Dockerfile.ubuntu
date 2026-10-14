@@ -1,0 +1,13 @@
+# Dynamic glibc build. Frida's agent cannot be injected into the static Alpine build (Dockerfile).
+# Usage: docker build -f Dockerfile.ubuntu --target export --output dist .
+FROM ubuntu:24.04 AS build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends cmake ninja-build g++-multilib \
+    && rm -rf /var/lib/apt/lists/*
+COPY . /wibo
+# Ubuntu's gcc enables _FORTIFY_SOURCE, whose checks abort wibo at startup.
+RUN cmake -S /wibo -B /wibo/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-U_FORTIFY_SOURCE" \
+    && cmake --build /wibo/build && strip -g /wibo/build/wibo
+
+FROM scratch AS export
+COPY --from=build /wibo/build/wibo .
