@@ -425,6 +425,14 @@ int main(int argc, char **argv) {
 	fclose(f);
 
 	uint16_t tibSegment = (tibDesc.entry_number << 3) | 7;
+	// Start the guest with Windows' FPU state: 53-bit x87 precision and the default SSE control word
+	// (upstream e8f4795). Linux leaves x87 at 64-bit precision, which changes mwccarm's float-driven choices,
+	// e.g. the switch jump-table range in DQIX's MSL __pformatter (02003418) comes out 4 bytes short.
+	{
+		uint16_t fpcw = 0x027f;
+		uint32_t mxcsr = 0x1f80;
+		asm volatile("fninit\n\tfldcw %0\n\tldmxcsr %1" : : "m"(fpcw), "m"(mxcsr));
+	}
 	// Invoke the damn thing
 	asm(
 		"movw %0, %%fs; call *%1"
